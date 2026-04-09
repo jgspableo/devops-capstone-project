@@ -2,8 +2,8 @@
 Account API Service Test Suite
 
 Test cases can be run with the following:
-nosetests -v --with-spec --spec-color
-coverage report -m
+    nosetests -v --with-spec --spec-color
+    coverage report -m
 """
 import os
 import logging
@@ -13,15 +13,17 @@ from tests.factories import AccountFactory
 from service.common import status  # HTTP Status Codes
 from service.models import db, Account, init_db
 from service.routes import app
+from service import talisman
 
 DATABASE_URI = os.getenv(
     "DATABASE_URI", "postgresql://postgres:postgres@localhost:5432/postgres"
 )
 BASE_URL = "/accounts"
+HTTPS_ENVIRON = {"wsgi.url_scheme": "https"}
 
 
 ######################################################################
-# T E S T   C A S E S
+#  T E S T   C A S E S
 ######################################################################
 class TestAccountService(TestCase):
     """Account Service Tests"""
@@ -33,6 +35,7 @@ class TestAccountService(TestCase):
         app.config["DEBUG"] = False
         app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URI
         app.logger.setLevel(logging.CRITICAL)
+        talisman.force_https = False
         init_db(app)
 
     @classmethod
@@ -51,7 +54,7 @@ class TestAccountService(TestCase):
         db.session.remove()
 
     ######################################################################
-    # H E L P E R   M E T H O D S
+    #  H E L P E R   M E T H O D S
     ######################################################################
     def _create_accounts(self, count):
         """Factory method to create accounts in bulk"""
@@ -70,12 +73,33 @@ class TestAccountService(TestCase):
         return accounts
 
     ######################################################################
-    # A C C O U N T   T E S T   C A S E S
+    #  A C C O U N T   T E S T   C A S E S
     ######################################################################
     def test_index(self):
         """It should get 200_OK from the Home Page"""
         response = self.client.get("/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_security_headers(self):
+        """It should return security headers on the Home Page"""
+        response = self.client.get("/", environ_overrides=HTTPS_ENVIRON)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.headers.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(
+            response.headers.get("Content-Security-Policy"),
+            "default-src 'self'; object-src 'none'",
+        )
+        self.assertEqual(
+            response.headers.get("Referrer-Policy"),
+            "strict-origin-when-cross-origin",
+        )
+
+    def test_cors_headers(self):
+        """It should return CORS headers on the Home Page"""
+        response = self.client.get("/", environ_overrides=HTTPS_ENVIRON)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
 
     def test_health(self):
         """It should be healthy"""
@@ -91,10 +115,8 @@ class TestAccountService(TestCase):
             BASE_URL, json=account.serialize(), content_type="application/json"
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-
         location = response.headers.get("Location", None)
         self.assertIsNotNone(location)
-
         new_account = response.get_json()
         self.assertEqual(new_account["name"], account.name)
         self.assertEqual(new_account["email"], account.email)
@@ -122,7 +144,6 @@ class TestAccountService(TestCase):
         self._create_accounts(5)
         response = self.client.get(BASE_URL)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
         data = response.get_json()
         self.assertEqual(len(data), 5)
 
@@ -130,7 +151,6 @@ class TestAccountService(TestCase):
         """It should return an empty list if there are no Accounts"""
         response = self.client.get(BASE_URL)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
         data = response.get_json()
         self.assertEqual(data, [])
 
@@ -139,7 +159,6 @@ class TestAccountService(TestCase):
         test_account = self._create_accounts(1)[0]
         response = self.client.get(f"{BASE_URL}/{test_account.id}")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
         data = response.get_json()
         self.assertEqual(data["id"], test_account.id)
         self.assertEqual(data["name"], test_account.name)
@@ -156,17 +175,14 @@ class TestAccountService(TestCase):
     def test_update_account(self):
         """It should Update an existing Account"""
         test_account = self._create_accounts(1)[0]
-
         new_data = test_account.serialize()
         new_data["phone_number"] = "555-1111"
-
         response = self.client.put(
             f"{BASE_URL}/{test_account.id}",
             json=new_data,
             content_type="application/json",
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
         updated_account = response.get_json()
         self.assertEqual(updated_account["id"], test_account.id)
         self.assertEqual(updated_account["name"], test_account.name)
@@ -201,7 +217,6 @@ class TestAccountService(TestCase):
         test_account = self._create_accounts(1)[0]
         response = self.client.delete(f"{BASE_URL}/{test_account.id}")
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-
         response = self.client.get(f"{BASE_URL}/{test_account.id}")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
